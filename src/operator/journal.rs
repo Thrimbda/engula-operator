@@ -2,7 +2,7 @@ use crate::{telemetry, Error, Result};
 use crate::{api::journal::*};
 use chrono::prelude::*;
 use futures::{future::BoxFuture, FutureExt, StreamExt};
-use k8s_openapi::api::{core::v1::ObjectReference, apps::v1::Deployment};
+use k8s_openapi::api::{core::v1::ObjectReference, apps::v1::{Deployment, DeploymentSpec}};
 use kube::{
     Error as kubeerror,
     api::{Api, ListParams, Patch, PatchParams, ResourceExt},
@@ -13,13 +13,16 @@ use kube::{
     },
     CustomResource, Resource,
 };
+use kube::api::{ObjectMeta};
 use prometheus::{
     default_registry, proto::MetricFamily, register_histogram_vec, register_int_counter, HistogramOpts,
     HistogramVec, IntCounter,
 };
 use serde::Serialize;
 use serde_json::json;
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::{HashMap, BTreeMap}, sync::Arc};
+use k8s_openapi::api::core::v1::{Container, PodSpec, PodTemplateSpec};
+use k8s_openapi::apimachinery::pkg::apis::meta::v1::LabelSelector;
 use tokio::{
     sync::RwLock,
     time::{Duration, Instant},
@@ -37,8 +40,10 @@ struct Data {
     metrics: Metrics,
 }
 
+// reconcile loop of the operator, reacts to changes in the kubernetes cluster
 #[instrument(skip(ctx), fields(trace_id))]
 async fn reconcile(journal: Journal, ctx: Context<Data>) -> Result<ReconcilerAction, Error> {
+    // tracing related
     let trace_id = telemetry::get_trace_id();
     Span::current().record("trace_id", &field::display(&trace_id));
     let start = Instant::now();
@@ -66,8 +71,8 @@ async fn reconcile(journal: Journal, ctx: Context<Data>) -> Result<ReconcilerAct
         .map_err(Error::KubeError)?;
     let current = match deploys.get(&name).await {
         Ok(current) => Some(current),
-        Err(kube::Error::Api(e)) => None,
-        _ => None // should actually throw the err
+        Err(kube::Error::Api(_)) => None,
+        Err(e) => return Err(Error::KubeError(e)) // exit early
     };
 
     // if journal.spec.info.contains("bad") {
@@ -99,6 +104,43 @@ async fn reconcile(journal: Journal, ctx: Context<Data>) -> Result<ReconcilerAct
         requeue_after: Some(Duration::from_secs(3600 / 2)),
     })
 }
+
+fn desired_deploy() -> Deployment {
+    Deployment {
+        metadata: ObjectMeta {
+            name: Some("".into()),
+            namespace: Some("".into()),
+            labels: Some(BTreeMap::new()),
+            ..Default::default()
+        },
+        spec: Some(DeploymentSpec {
+            replicas: Some(1),
+            selector: LabelSelector {
+                match_labels: Some(BTreeMap::new()),
+                ..Default::default()
+            },
+            template: PodTemplateSpec {
+                metadata: Some(ObjectMeta {
+                    labels: Some(BTreeMap::new()),
+                    ..Default::default()
+                }),
+                spec: Some(PodSpec {
+                    containers: vec![Container {
+                        name: "".into(),
+                        image: Some("".into()),
+                        ..Default::default()
+                    }],
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
+            ..Default::default()
+        }),
+        ..Default::default()
+    }
+}
+
+// on error callback
 fn error_policy(error: &Error, _ctx: Context<Data>) -> ReconcilerAction {
     warn!("reconcile failed: {:?}", error);
     ReconcilerAction {
