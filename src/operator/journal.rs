@@ -31,13 +31,13 @@ use tracing::{debug, error, event, field, info, instrument, trace, warn, Level, 
 
 // Context for our reconciler
 #[derive(Clone)]
-struct Data {
+pub struct Data {
     /// kubernetes client
-    client: Client,
+    pub client: Client,
     /// In memory state
-    state: Arc<RwLock<State>>,
+    pub state: Arc<RwLock<State>>,
     /// Various prometheus metrics
-    metrics: Metrics,
+    pub metrics: Metrics,
 }
 
 // reconcile loop of the operator, reacts to changes in the kubernetes cluster
